@@ -110,7 +110,10 @@ def infer_disease(image):
             confidence, prediction = torch.max(probs, 1)
         probs_np = probs.numpy()  # shape: (1, 8)
         class_idx = int(prediction.item())
-        health_score = float(confidence.item())*100
+        healthy_idx = disease_classes.index("Healthy")  
+        health_score = float(probs_np[0][healthy_idx]) * 100
+
+
     else:
         # Demo fallback
         probs_np = np.random.rand(1, len(disease_classes))

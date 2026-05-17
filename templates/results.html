@@ -35,7 +35,7 @@
                     {{ results.disease.predicted_class }}
                     <span style="color:#555;">(Confidence: {{ results.disease.confidence|round(2) }})</span>
                 </li>
-                <li><b>Health Score:</b> {{ results.disease.health_score|round(1) }}%</li>
+                <li><b>Health Score:</b> {{ results.disease.health_score|round(4) }}%</li>
             </ul>
             <table style="margin-bottom: 2.2rem; min-width: 60%; border-collapse: collapse; border-radius: 8px; overflow: hidden;">
                 <tr>
