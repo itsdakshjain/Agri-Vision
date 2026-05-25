@@ -4310,3 +4310,143 @@ button:disabled {
         padding-top: 0.5rem;
     }
 }
+
+/* =========================================================
+   Issue #275: Light Theme UI Inconsistencies Fixes
+   
+   Fixes for:
+   1. New Analysis button (green branding, modern styling)
+   2. Export PDF button (consistent appearance)
+   3. Recent Analyses container (theme-aware background)
+========================================================= */
+
+/* Results Action Buttons (New Analysis, Export PDF) */
+.results-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.results-action-btn.primary {
+    background: linear-gradient(135deg, var(--emerald-green) 0%, var(--fresh-green) 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(46, 139, 87, 0.25);
+}
+
+.results-action-btn.primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(46, 139, 87, 0.35);
+}
+
+.results-action-btn.primary:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px rgba(46, 139, 87, 0.2);
+}
+
+.results-action-btn.secondary {
+    background: var(--card-bg);
+    color: var(--text-main);
+    border: 1.5px solid var(--card-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.results-action-btn.secondary:hover {
+    background: rgba(46, 139, 87, 0.06);
+    border-color: rgba(46, 139, 87, 0.3);
+    box-shadow: 0 4px 12px rgba(46, 139, 87, 0.1);
+}
+
+.results-action-btn.secondary:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .results-action-btn.secondary {
+    background: var(--card-bg);
+    color: var(--text-main);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .results-action-btn.secondary:hover {
+    background: rgba(60, 179, 113, 0.12);
+    border-color: rgba(60, 179, 113, 0.4);
+    box-shadow: 0 4px 12px rgba(60, 179, 113, 0.2);
+}
+
+/* Recent Analyses Panel (Light Theme Adapted) */
+.results-recent-analyses-panel {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: rgba(46, 139, 87, 0.04);
+    box-shadow: var(--soft-shadow);
+}
+
+.results-recent-analyses-header {
+    margin-bottom: 1.5rem;
+}
+
+.results-recent-analyses-empty {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--card-bg);
+    border: 1px dashed var(--card-border);
+    border-radius: 12px;
+    font-style: italic;
+}
+
+[data-theme="dark"] .results-recent-analyses-panel {
+    background: rgba(60, 179, 113, 0.08);
+    border-color: rgba(60, 179, 113, 0.2);
+}
+
+[data-theme="dark"] .results-recent-analyses-empty {
+    background: rgba(22, 27, 33, 0.6);
+    border-color: rgba(60, 179, 113, 0.15);
+    color: rgba(224, 224, 224, 0.8);
+}
+
+/* Ensure old agri-scan-history styling still works for backward compatibility */
+.agri-scan-history-panel {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    background: rgba(46, 139, 87, 0.04);
+    box-shadow: var(--soft-shadow);
+}
+
+[data-theme="dark"] .agri-scan-history-panel {
+    background: rgba(8, 22, 18, 0.4);
+    border-color: rgba(60, 179, 113, 0.2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.agri-scan-history-empty {
+    padding: 1.5rem;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--card-bg);
+    border: 1px dashed var(--card-border);
+    border-radius: 12px;
+    font-style: italic;
+}
+
+[data-theme="dark"] .agri-scan-history-empty {
+    background: rgba(22, 27, 33, 0.6);
+    border-color: rgba(60, 179, 113, 0.15);
+    color: rgba(224, 224, 224, 0.8);
+}
