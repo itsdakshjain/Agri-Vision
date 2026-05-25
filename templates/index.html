@@ -3,31 +3,6 @@
     <!-- Professional Print Frame (Only visible in print) -->
     <div class="print-frame no-print"></div>
 
-    <!-- Navigation -->
-    <nav class="navbar" id="navbar">
-        <div class="nav-container">
-            <a href="/" class="nav-brand">
-                <i class="fas fa-seedling"></i>
-                <span>Agri-Vision</span>
-            </a>
-            <ul class="nav-menu">
-                <li><a href="/">Home</a></li>
-                <li><a href="/analyze">Analyze</a></li>
-                <li><a href="/comparison">Field Comparison</a></li>
-
-                <li><a href="/demo">Demo</a></li>
-                <li><a href="/tutorials">Tutorials</a></li>
-                <li><a href="/stories">Stories</a></li>
-                <li>
-                    <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle dark mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                </li>
-                <li><a href="/analyze" class="btn btn-primary">Get Started</a></li>
-            </ul>
-        </div>
-    </nav>
-
     <!-- Main Content -->
     <div class="main-content">
         {% with messages = get_flashed_messages(with_categories=true) %}
