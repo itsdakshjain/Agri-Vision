@@ -2,8 +2,9 @@
 Agri-Vision Flask Application
 Unified inference for disease classification (ResNet50) and growth stage prediction (YOLOv8)
 """
+import hashlib
 import logging
-from flask import Flask, render_template, request, jsonify, flash, redirect, url_for
+from flask import Flask, render_template, request, jsonify, flash, redirect, url_for, send_file
 import os
 import random
 import re
@@ -430,6 +431,8 @@ def infer_disease(image):
             confidence, prediction = torch.max(probs, 1)
         probs_np = probs.numpy()  # shape: (1, 8)
         class_idx = int(prediction.item())
+        confidence_value = float(confidence.item())
+        predicted_class = disease_classes[class_idx]
         healthy_idx = disease_classes.index("Healthy")  
         health_score = float(probs_np[0][healthy_idx]) * 100
 
@@ -439,6 +442,8 @@ def infer_disease(image):
         probs_np = np.random.rand(1, len(disease_classes))
         probs_np = probs_np / probs_np.sum(axis=1, keepdims=True)
         class_idx = int(np.argmax(probs_np[0]))
+        confidence_value = float(np.max(probs_np[0]))
+        predicted_class = disease_classes[class_idx]
         health_score = float(np.max(probs_np[0]))*100
 
     # Format probabilities per class
@@ -446,13 +451,12 @@ def infer_disease(image):
 
     return {
         "predicted_class": predicted_class,
-        "predicted_class_idx": top1_idx,
-        "confidence": top1_conf,
+        "predicted_class_idx": class_idx,
+        "confidence": confidence_value,
         "all_confidences": disease_confidences,
         "health_score": health_score,
         "raw": probs_np.tolist(),
     }
-    return results
 
 def infer_growth_stage(image):
     result = {
@@ -647,6 +651,9 @@ def set_cached_grad_cam(image_hash: str, overlay_b64: str, heatmap_only_b64: str
 
 
 def analyze_image(image: np.ndarray) -> Dict[str, Any]:
+    import time
+    start_time = time.time()
+    
     resnet_model, yolo_model = model_manager.load_models()
     try:
         try:
@@ -658,6 +665,31 @@ def analyze_image(image: np.ndarray) -> Dict[str, Any]:
         disease = infer_disease(image)
         if not isinstance(disease, dict) or "predicted_class" not in disease or "health_score" not in disease:
             raise ValueError("Invalid disease model prediction output.")
+
+        # Track metrics in registry
+        inference_time = time.time() - start_time
+        try:
+            # Update ResNet metrics
+            if disease and disease.get("confidence"):
+                registry.update_metrics(
+                    model_type="resnet",
+                    version="v1.0",
+                    confidence=disease.get("confidence", 0.0),
+                    inference_time=inference_time,
+                    success=True
+                )
+            
+            # Update YOLO metrics
+            if growth and growth.get("confidence"):
+                registry.update_metrics(
+                    model_type="yolo",
+                    version="v1.0",
+                    confidence=growth.get("confidence", 0.0),
+                    inference_time=inference_time,
+                    success=True
+                )
+        except Exception as e:
+            logger.error(f"Error tracking metrics: {e}")
 
         # Check cache first
         image_hash = hashlib.sha256(image.tobytes()).hexdigest()
@@ -1021,6 +1053,82 @@ def set_rollback_threshold():
         })
     except Exception as e:
         logger.error(f"Error setting rollback threshold: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/models/export/pdf', methods=['GET'])
+def export_pdf():
+    """Export model metrics as PDF"""
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        from io import BytesIO
+
+        models = registry.list_models()
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        elements = []
+        styles = getSampleStyleSheet()
+
+        # Title
+        title = Paragraph("Model Performance Report", styles['Title'])
+        elements.append(title)
+        elements.append(Spacer(1, 12))
+
+        # Date
+        date = Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal'])
+        elements.append(date)
+        elements.append(Spacer(1, 12))
+
+        # Table data
+        table_data = [['Model Type', 'Version', 'Accuracy', 'Requests', 'Success Rate', 'Avg Confidence', 'Avg Time', 'Status']]
+        
+        if models:
+            for model_type in models:
+                for model in models[model_type]:
+                    metrics = model.performance_metrics
+                    success_rate = (metrics.successful_predictions / metrics.total_requests * 100) if metrics.total_requests > 0 else 0
+                    table_data.append([
+                        model_type.capitalize(),
+                        model.version,
+                        f"{model.accuracy * 100:.2f}%",
+                        str(metrics.total_requests),
+                        f"{success_rate:.1f}%",
+                        f"{metrics.avg_confidence * 100:.1f}%",
+                        f"{metrics.avg_inference_time:.3f}s",
+                        'Active' if model.is_active else 'Inactive'
+                    ])
+
+        # Create table
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        elements.append(table)
+        doc.build(elements)
+        
+        buffer.seek(0)
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'model_metrics_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf',
+            mimetype='application/pdf'
+        )
+    except ImportError:
+        return jsonify({"error": "reportlab not installed. Install with: pip install reportlab"}), 500
+    except Exception as e:
+        logger.error(f"Error generating PDF: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -1420,34 +1528,57 @@ def api_analyze():
     
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
-        
-    # --- YOUR NEW SECURITY CHECK ---
-    if file and allowed_file(file.filename):
-        # SECURIZE THE FILENAME
-        filename = secure_filename(file.filename)
-        
+    try:
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if image is None:
+            return jsonify({'error': 'Invalid image file'}), 400
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = analyze_image(image_rgb)
+        return jsonify({
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "results": results
+        })
+    except Exception as e:
+        logger.error(f"API analysis error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/analyze_stream", methods=["POST"])
+def api_analyze_stream():
+    """Streaming endpoint for real-time analysis progress"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    def generate():
         try:
+            # Send progress updates
+            yield f"data: {json.dumps({'status': 'uploading', 'progress': 25})}\n\n"
+            
             file_bytes = np.frombuffer(file.read(), np.uint8)
             image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            
             if image is None:
-                return jsonify({'error': 'Invalid image file'}), 400
-                
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Invalid image file'})}\n\n"
+                return
+            
+            yield f"data: {json.dumps({'status': 'analyzing', 'progress': 50})}\n\n"
+            
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             results = analyze_image(image_rgb)
             
-            return jsonify({
-                "status": "success",
-                "timestamp": datetime.now().isoformat(),
-                "results": results
-            })
+            yield f"data: {json.dumps({'status': 'generating', 'progress': 75})}\n\n"
+            
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'results': results})}\n\n"
         except Exception as e:
-            logger.error(f"API analysis error: {e}")
-            return jsonify({'error': str(e)}), 500
-    else:
-        # Reject invalid file types immediately
-        return jsonify({'error': 'Invalid file type. Only PNG, JPG, and JPEG are allowed.'}), 400
+            logger.error(f"Streaming analysis error: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
     
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
 if __name__ == '__main__':
     logger.info("=" * 60)
     logger.info("Agri-Vision Cotton Analysis System")
@@ -1465,6 +1596,28 @@ if __name__ == '__main__':
     logger.info("=" * 60)
 
     ensure_models_loaded()
+    
+    # Register models in the registry
+    try:
+        registry.register_model(
+            model_type="resnet",
+            version="v1.0",
+            path="models/cotton_crop_disease_classification/full_resnet50_model.pth",
+            accuracy=0.9983,
+            dataset_version="v1.0"
+        )
+        registry.register_model(
+            model_type="yolo",
+            version="v1.0",
+            path="models/cotton_crop_growth_stage_prediction/best.pt",
+            accuracy=0.6006,
+            dataset_version="v1.0"
+        )
+        registry.set_active_model("resnet", "v1.0")
+        registry.set_active_model("yolo", "v1.0")
+        logger.info("Models registered in model registry")
+    except Exception as e:
+        logger.error(f"Error registering models: {e}")
     
     is_debug = os.getenv("FLASK_DEBUG", "False").lower() in ("true", "1", "t")
     app.run(debug=is_debug, host="0.0.0.0", port=5000)

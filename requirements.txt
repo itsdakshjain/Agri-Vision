@@ -2,27 +2,12 @@ Flask>=3.1.0
 numpy>=2.2.0
 opencv-python-headless>=4.12.0
 Pillow>=11.0.0
-matplotlib>=3.7.0
-scikit-learn>=1.3.0
-python-dotenv>=1.0.0
-Werkzeug>=2.3.0
-ultralytics>=8.0.0
-torch>=2.0.0
-torchvision>=0.15.0
 flask-cors>=6.0.0
-gunicorn
-pytest>=7.0.0
-pytest-cov>=4.0.0
-# Updated TensorFlow
-#tensorflow>=2.19.0
-
 matplotlib>=3.10.0
 scikit-learn>=1.7.0
 python-dotenv>=1.1.0
 Werkzeug>=3.1.0
 ultralytics>=8.3.0
-
-#updated used  in app.py
 torch>=2.0.0
 torchvision>=0.15.0
 
@@ -43,3 +28,7 @@ redis>=6.0.0
 # Utilities
 requests>=2.32.0
 urllib3>=2.2.0
+
+# PDF/CSV Export
+reportlab>=4.0.0
+pandas>=2.0.0

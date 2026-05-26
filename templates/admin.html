@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Model Management Dashboard - Agri-Vision</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         .admin-container {
             max-width: 1400px;
@@ -222,6 +223,63 @@
             border-radius: 5px;
             margin-bottom: 20px;
         }
+        .charts-section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .charts-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .chart-container {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            height: 300px;
+        }
+        .export-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .comparison-section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        .comparison-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .comparison-table th,
+        .comparison-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .comparison-table th {
+            background: #f8f9fa;
+            font-weight: bold;
+        }
+        .comparison-table tr:hover {
+            background: #f8f9fa;
+        }
     </style>
 </head>
 <body>
@@ -272,6 +330,50 @@
             </div>
         </div>
 
+        <!-- Charts Section -->
+        <div class="charts-section">
+            <h2>📊 Real-Time Analytics</h2>
+            <div class="export-buttons">
+                <button class="btn btn-primary" onclick="exportCSV()">Export CSV</button>
+                <button class="btn btn-primary" onclick="exportPDF()">Export PDF</button>
+            </div>
+            <div class="charts-grid">
+                <div class="chart-container">
+                    <canvas id="requestsChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="confidenceChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="successRateChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="inferenceTimeChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Comparison Section -->
+        <div class="comparison-section">
+            <h2>🔄 Model Version Comparison</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Model Type</th>
+                        <th>Version</th>
+                        <th>Accuracy</th>
+                        <th>Requests</th>
+                        <th>Success Rate</th>
+                        <th>Avg Confidence</th>
+                        <th>Avg Inference Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="comparison-table-body">
+                </tbody>
+            </table>
+        </div>
+
         <!-- ResNet Models Section -->
         <div class="models-section">
             <h2>🔬 Disease Classification Models (ResNet)</h2>
@@ -291,12 +393,105 @@
 
     <script>
         let currentData = null;
+        let requestsChart, confidenceChart, successRateChart, inferenceTimeChart;
+        let historicalData = {
+            labels: [],
+            requests: [],
+            confidence: [],
+            successRate: [],
+            inferenceTime: []
+        };
 
         // Load initial data
         loadModels();
+        initCharts();
 
         // Auto-refresh every 10 seconds
         setInterval(loadModels, 10000);
+
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            };
+
+            // Requests Chart
+            requestsChart = new Chart(document.getElementById('requestsChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Total Requests',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Confidence Chart
+            confidenceChart = new Chart(document.getElementById('confidenceChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Avg Confidence (%)',
+                        data: [],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Success Rate Chart
+            successRateChart = new Chart(document.getElementById('successRateChart'), {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Success Rate (%)',
+                        data: [],
+                        backgroundColor: '#f59e0b',
+                        borderColor: '#d97706',
+                        borderWidth: 1
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // Inference Time Chart
+            inferenceTimeChart = new Chart(document.getElementById('inferenceTimeChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Avg Inference Time (s)',
+                        data: [],
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: chartOptions
+            });
+        }
 
         async function loadModels() {
             try {
@@ -305,9 +500,142 @@
                 currentData = data;
                 renderModels(data);
                 updateStats(data);
+                updateCharts(data);
+                updateComparisonTable(data);
             } catch (error) {
                 showError('Failed to load models: ' + error.message);
             }
+        }
+
+        function updateCharts(data) {
+            const now = new Date().toLocaleTimeString();
+            
+            // Calculate aggregated metrics
+            let totalRequests = 0;
+            let totalConfidence = 0;
+            let totalSuccessRate = 0;
+            let totalInferenceTime = 0;
+            let modelCount = 0;
+
+            if (data.models) {
+                Object.keys(data.models).forEach(type => {
+                    data.models[type].forEach(model => {
+                        const metrics = model.performance_metrics;
+                        totalRequests += metrics.total_requests;
+                        totalConfidence += metrics.avg_confidence;
+                        totalInferenceTime += metrics.avg_inference_time;
+                        if (metrics.total_requests > 0) {
+                            totalSuccessRate += (metrics.successful_predictions / metrics.total_requests);
+                        }
+                        modelCount++;
+                    });
+                });
+            }
+
+            // Calculate incremental requests (change since last update)
+            const lastRequests = historicalData.requests.length > 0 ? historicalData.requests[historicalData.requests.length - 1] : 0;
+            const incrementalRequests = totalRequests - lastRequests;
+
+            // Update historical data
+            historicalData.labels.push(now);
+            historicalData.requests.push(incrementalRequests >= 0 ? incrementalRequests : totalRequests);
+            historicalData.confidence.push(modelCount > 0 ? (totalConfidence / modelCount) * 100 : 0);
+            historicalData.successRate.push(modelCount > 0 ? (totalSuccessRate / modelCount) * 100 : 0);
+            historicalData.inferenceTime.push(modelCount > 0 ? totalInferenceTime / modelCount : 0);
+
+            // Keep only last 20 data points
+            if (historicalData.labels.length > 20) {
+                historicalData.labels.shift();
+                historicalData.requests.shift();
+                historicalData.confidence.shift();
+                historicalData.successRate.shift();
+                historicalData.inferenceTime.shift();
+            }
+
+            // Update charts
+            requestsChart.data.labels = historicalData.labels;
+            requestsChart.data.datasets[0].data = historicalData.requests;
+            requestsChart.data.datasets[0].label = 'New Requests';
+            requestsChart.update();
+
+            confidenceChart.data.labels = historicalData.labels;
+            confidenceChart.data.datasets[0].data = historicalData.confidence;
+            confidenceChart.update();
+
+            successRateChart.data.labels = historicalData.labels;
+            successRateChart.data.datasets[0].data = historicalData.successRate;
+            successRateChart.update();
+
+            inferenceTimeChart.data.labels = historicalData.labels;
+            inferenceTimeChart.data.datasets[0].data = historicalData.inferenceTime;
+            inferenceTimeChart.update();
+        }
+
+        function updateComparisonTable(data) {
+            const tbody = document.getElementById('comparison-table-body');
+            let html = '';
+
+            if (data.models) {
+                Object.keys(data.models).forEach(type => {
+                    data.models[type].forEach(model => {
+                        const metrics = model.performance_metrics;
+                        const successRate = metrics.total_requests > 0 
+                            ? ((metrics.successful_predictions / metrics.total_requests) * 100).toFixed(1) 
+                            : '0.0';
+                        
+                        html += `
+                            <tr>
+                                <td>${type.charAt(0).toUpperCase() + type.slice(1)}</td>
+                                <td>${model.version}</td>
+                                <td>${(model.accuracy * 100).toFixed(2)}%</td>
+                                <td>${metrics.total_requests}</td>
+                                <td>${successRate}%</td>
+                                <td>${(metrics.avg_confidence * 100).toFixed(1)}%</td>
+                                <td>${metrics.avg_inference_time.toFixed(3)}s</td>
+                                <td>
+                                    <span class="model-badge ${model.is_active ? 'active' : 'inactive'}">
+                                        ${model.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                });
+            }
+
+            tbody.innerHTML = html;
+        }
+
+        function exportCSV() {
+            if (!currentData || !currentData.models) {
+                alert('No data to export');
+                return;
+            }
+
+            let csv = 'Model Type,Version,Accuracy,Requests,Success Rate,Avg Confidence,Avg Inference Time,Status\n';
+
+            Object.keys(currentData.models).forEach(type => {
+                currentData.models[type].forEach(model => {
+                    const metrics = model.performance_metrics;
+                    const successRate = metrics.total_requests > 0 
+                        ? ((metrics.successful_predictions / metrics.total_requests) * 100).toFixed(1) 
+                        : '0.0';
+                    
+                    csv += `${type},${model.version},${(model.accuracy * 100).toFixed(2)},${metrics.total_requests},${successRate}%,${(metrics.avg_confidence * 100).toFixed(1)}%,${metrics.avg_inference_time.toFixed(3)},${model.is_active ? 'Active' : 'Inactive'}\n`;
+                });
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `model_metrics_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function exportPDF() {
+            window.location.href = '/admin/models/export/pdf';
         }
 
         function renderModels(data) {
