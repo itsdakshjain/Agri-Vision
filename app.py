@@ -44,6 +44,7 @@ from jinja2 import Environment, FileSystemLoader
 from model_registry import registry
 from services.weather_service import generate_weather_recommendations
 from services.yield_service import estimate_yield
+from services.recommendation_engine import get_recommendations as get_treatment_recommendations
 
 load_dotenv()
 
@@ -99,6 +100,8 @@ app.config["MAX_FORM_MEMORY_SIZE"] = 25 * 1024 * 1024
 
 LANG = {
     "en": {"welcome": "Welcome to Agri Vision"},
+    "hi": {"welcome": "एग्री विज़न में आपका स्वागत है"},
+    "ta": {"welcome": "அக்ரி விஷனுக்கு வரவேற்கிறோம்"},
     "te": {"welcome": "అగ్రి విజన్‌కు స్వాగతం"},
 }
 
@@ -763,6 +766,13 @@ def analyze_image(image: np.ndarray) -> Dict[str, Any]:
         adv_recs = generate_advanced_recommendations(disease, growth)
         insights = generate_farmer_insights(disease, growth)
 
+        # Context-aware treatment recommendations from the recommendation engine
+        treatment_recs = get_treatment_recommendations(
+            crop_type="cotton",
+            disease_name=disease.get("predicted_class", ""),
+            confidence=disease.get("confidence"),
+        )
+
         result = {
             "disease": disease,
             "growth": growth,
@@ -773,6 +783,7 @@ def analyze_image(image: np.ndarray) -> Dict[str, Any]:
             "yield_estimate": yield_est,
             "advanced_recommendations": adv_recs,
             "farmer_insights": insights,
+            "treatment_recommendations": treatment_recs,
         }
 
         if growth.get("main_class") is None:
@@ -1239,6 +1250,7 @@ def analyze():
                 grad_cam_image_b64=results.get("grad_cam_image_b64"),
                 heatmap_only_b64=results.get("heatmap_only_b64"),
                 disease_info=disease_info,
+                treatment_recommendations=results.get("treatment_recommendations", {}),
             )
         except Exception as exc:
             logger.error("Analysis error: %s", exc)
@@ -1457,6 +1469,13 @@ def demo():
         # Generate farmer insights
         insights = generate_farmer_insights(demo_disease, demo_growth)
 
+        # Context-aware treatment recommendations for demo
+        demo_treatment_recs = get_treatment_recommendations(
+            crop_type="cotton",
+            disease_name=demo_disease.get("predicted_class", "Healthy"),
+            confidence=demo_disease.get("confidence"),
+        )
+
         example_json = {
         "disease": demo_disease,
         "growth": demo_growth,
@@ -1465,7 +1484,8 @@ def demo():
         "disease_severity": severity,
         "yield_estimate": yield_est,
         "advanced_recommendations": adv_recs,
-        "farmer_insights": insights
+        "farmer_insights": insights,
+        "treatment_recommendations": demo_treatment_recs,
         }
         return render_template(
         "results.html",
@@ -1476,7 +1496,8 @@ def demo():
         raw_json=json.dumps(example_json, indent=2),
         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         grad_cam_image_b64=grad_cam_image_b64,
-        yield_estimate=yield_est # Also pass as top-level for robustness
+        yield_estimate=yield_est, # Also pass as top-level for robustness
+        treatment_recommendations=demo_treatment_recs,
         )
 
     except Exception as e:
@@ -1548,8 +1569,11 @@ def api_chat():
         if re.search(pattern, message):
             reply = random.choice(reply_options)
             break
-    return jsonify({"reply": reply})
+    else:
+        # If the loop finishes without hitting 'break', it means no pattern matched
+        logger.info(f"Unmatched chat query: {message}")
 
+    return jsonify({"reply": reply})
 
 @app.route("/api/weather")
 def api_weather():
@@ -1782,6 +1806,136 @@ def api_batch_results(job_id):
         'failed_images': job.failed_images,
         'results': results
     })
+
+@app.route("/api/batch_results/<job_id>/export/csv", methods=["GET"])
+def export_batch_csv(job_id):
+    """Export batch results as CSV"""
+    from models import BatchJob
+    import csv
+    from io import StringIO
+    
+    job = BatchJob.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Batch job not found'}), 404
+
+    si = StringIO()
+    cw = csv.writer(si)
+    cw.writerow(['Image Name', 'Status', 'Disease', 'Confidence', 'Health Score', 'Growth Stage'])
+    
+    # Sort results by image index
+    results = sorted(job.results, key=lambda x: x.image_index)
+    
+    for r in results:
+        results_data = r.results_json or {}
+        disease = results_data.get('disease', {})
+        growth = results_data.get('growth', {})
+        
+        disease_class = disease.get('predicted_class', 'N/A')
+        confidence = f"{disease.get('confidence', 0):.3f}" if disease.get('confidence') is not None else 'N/A'
+        health_score = f"{disease.get('health_score', 0):.1f}" if disease.get('health_score') is not None else 'N/A'
+        growth_class = growth.get('main_class', 'N/A')
+        
+        cw.writerow([
+            r.image_name,
+            r.status,
+            disease_class,
+            confidence,
+            health_score,
+            growth_class
+        ])
+        
+    output = si.getvalue()
+    si.close()
+    
+    return Response(
+        output,
+        mimetype="text/csv",
+        headers={"Content-disposition": f"attachment; filename=batch_results_{job_id}.csv"}
+    )
+
+
+@app.route("/api/batch_results/<job_id>/export/pdf", methods=["GET"])
+def export_batch_pdf(job_id):
+    """Export batch results as PDF"""
+    from models import BatchJob
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        from io import BytesIO
+    except ImportError:
+        return jsonify({"error": "reportlab not installed. Install with: pip install reportlab"}), 500
+
+    job = BatchJob.query.get(job_id)
+    if not job:
+        return jsonify({'error': 'Batch job not found'}), 404
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter))
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Title
+    title = Paragraph(f"Batch Analysis Report (Job ID: {job_id})", styles['Title'])
+    elements.append(title)
+    elements.append(Spacer(1, 12))
+
+    # Summary
+    summary_text = f"Total Images: {job.total_images} | Completed: {job.completed_images} | Failed: {job.failed_images}"
+    summary = Paragraph(summary_text, styles['Normal'])
+    elements.append(summary)
+    elements.append(Spacer(1, 12))
+
+    # Table data
+    table_data = [['Image Name', 'Status', 'Disease', 'Confidence', 'Health Score', 'Growth Stage']]
+    
+    results = sorted(job.results, key=lambda x: x.image_index)
+    
+    for r in results:
+        results_data = r.results_json or {}
+        disease = results_data.get('disease', {})
+        growth = results_data.get('growth', {})
+        
+        disease_class = disease.get('predicted_class', 'N/A')
+        confidence = f"{disease.get('confidence', 0)*100:.1f}%" if disease.get('confidence') is not None else 'N/A'
+        health_score = f"{disease.get('health_score', 0):.1f}%" if disease.get('health_score') is not None else 'N/A'
+        growth_class = growth.get('main_class', 'N/A')
+        
+        table_data.append([
+            r.image_name,
+            r.status.upper(),
+            disease_class,
+            confidence,
+            health_score,
+            growth_class
+        ])
+
+    # Create table
+    table = Table(table_data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('WORDWRAP', (0, 0), (-1, -1), 'CJK'),
+    ]))
+    
+    elements.append(table)
+    doc.build(elements)
+    
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f'batch_results_{job_id}.pdf',
+        mimetype='application/pdf'
+    )
 
 
 @app.route("/batch", methods=["GET", "POST"])
@@ -2253,6 +2407,461 @@ def generate_summary_report():
         logger.error(f"Error generating summary report: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Disease Database & Symptom Checker ---
+
+@app.route("/disease-database")
+@login_required
+def disease_database():
+    """Disease database page"""
+    return render_template('disease_database.html')
+
+
+@app.route("/symptom-checker")
+@login_required
+def symptom_checker():
+    """Symptom checker page"""
+    return render_template('symptom_checker.html')
+
+
+@app.route("/api/diseases")
+def api_diseases():
+    """API endpoint to get list of diseases"""
+    from models import Disease
+    
+    search = request.args.get('search', '')
+    severity = request.args.get('severity', '')
+    affected_part = request.args.get('affected_part', '')
+    
+    query = Disease.query
+    
+    if search:
+        query = query.filter(Disease.name.ilike(f'%{search}%'))
+    
+    if severity:
+        query = query.filter(Disease.severity == severity)
+    
+    if affected_part:
+        query = query.filter(Disease.affected_parts.ilike(f'%{affected_part}%'))
+    
+    diseases = query.order_by(Disease.name).all()
+    
+    return jsonify({
+        'diseases': [d.to_dict() for d in diseases],
+        'count': len(diseases)
+    })
+
+
+@app.route("/api/diseases/<int:disease_id>")
+def api_disease_detail(disease_id):
+    """API endpoint to get disease details"""
+    from models import Disease
+    
+    disease = Disease.query.get(disease_id)
+    if not disease:
+        return jsonify({'error': 'Disease not found'}), 404
+    
+    return jsonify(disease.to_dict())
+
+
+@app.route("/api/symptoms")
+def api_symptoms():
+    """API endpoint to get list of symptoms"""
+    from models import Symptom
+    
+    category = request.args.get('category', '')
+    
+    query = Symptom.query
+    
+    if category:
+        query = query.filter(Symptom.category == category)
+    
+    symptoms = query.order_by(Symptom.category, Symptom.name).all()
+    
+    return jsonify({
+        'symptoms': [s.to_dict() for s in symptoms],
+        'count': len(symptoms)
+    })
+
+
+@app.route("/api/symptom-check", methods=['POST'])
+def api_symptom_check():
+    """API endpoint to check symptoms and suggest diseases"""
+    from models import Symptom, Disease, DiseaseSymptom
+    
+    data = request.get_json()
+    symptom_ids = data.get('symptom_ids', [])
+    
+    if not symptom_ids:
+        return jsonify({'error': 'No symptoms provided'}), 400
+    
+    # Get diseases associated with the symptoms
+    disease_scores = {}
+    
+    for symptom_id in symptom_ids:
+        associations = DiseaseSymptom.query.filter_by(symptom_id=symptom_id).all()
+        for assoc in associations:
+            if assoc.disease_id not in disease_scores:
+                disease_scores[assoc.disease_id] = 0
+            disease_scores[assoc.disease_id] += assoc.confidence
+    
+    # Sort by score
+    sorted_diseases = sorted(disease_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # Get top matches
+    results = []
+    for disease_id, score in sorted_diseases[:5]:
+        disease = Disease.query.get(disease_id)
+        if disease:
+            results.append({
+                'disease': disease.to_dict(),
+                'match_score': round(score * 100, 1)
+            })
+    
+    return jsonify({
+        'results': results,
+        'symptom_count': len(symptom_ids)
+    })
+
+
+# --- Disease Forecast & Weather Prediction ---
+
+@app.route("/disease-forecast")
+@login_required
+def disease_forecast():
+    """Disease forecast page"""
+    return render_template('disease_forecast.html')
+
+
+@app.route("/api/weather-forecast")
+def api_weather_forecast():
+    """API endpoint to get weather forecast for a location"""
+    from services.weather_service import get_weather_forecast
+    from services.disease_prediction_service import DiseasePredictor
+    
+    lat = request.args.get('lat', type=float)
+    lon = request.args.get('lon', type=float)
+    location_name = request.args.get('location', 'Unknown')
+    days = request.args.get('days', 14, type=int)
+    
+    if not lat or not lon:
+        return jsonify({'error': 'Latitude and longitude required'}), 400
+    
+    try:
+        # Get weather forecast
+        forecast_data = get_weather_forecast(lat, lon, days)
+        
+        if not forecast_data:
+            return jsonify({'error': 'Failed to fetch weather forecast'}), 500
+        
+        # Get disease predictions
+        predictor = DiseasePredictor()
+        predictions = predictor.get_all_disease_predictions(forecast_data['forecast'])
+        
+        return jsonify({
+            'location': location_name,
+            'lat': lat,
+            'lon': lon,
+            'weather_forecast': forecast_data['forecast'],
+            'disease_predictions': predictions
+        })
+    except Exception as e:
+        logger.error(f"Error fetching weather forecast: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/disease-prediction/<disease_name>")
+def api_disease_prediction(disease_name):
+    """API endpoint to get prediction for a specific disease"""
+    from services.weather_service import get_weather_forecast
+    from services.disease_prediction_service import DiseasePredictor
+    
+    lat = request.args.get('lat', type=float)
+    lon = request.args.get('lon', type=float)
+    days = request.args.get('days', 14, type=int)
+    
+    if not lat or not lon:
+        return jsonify({'error': 'Latitude and longitude required'}), 400
+    
+    try:
+        # Get weather forecast
+        forecast_data = get_weather_forecast(lat, lon, days)
+        
+        if not forecast_data:
+            return jsonify({'error': 'Failed to fetch weather forecast'}), 500
+        
+        # Get prediction for specific disease
+        predictor = DiseasePredictor()
+        predictions = predictor.predict_disease_risk(forecast_data['forecast'], disease_name)
+        
+        # Get high risk days
+        high_risk_days = predictor.get_high_risk_days(predictions)
+        
+        # Get recommendations
+        if predictions:
+            latest_risk = predictions[0]['risk_level']
+            recommendations = predictor.generate_recommendations(disease_name, latest_risk)
+        else:
+            recommendations = []
+        
+        return jsonify({
+            'disease': disease_name,
+            'predictions': predictions,
+            'high_risk_days': high_risk_days,
+            'recommendations': recommendations
+        })
+    except Exception as e:
+        logger.error(f"Error getting disease prediction: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/historical-patterns")
+def api_historical_patterns():
+    """API endpoint to analyze historical disease patterns with ML learning"""
+    from models import DiseaseOccurrence, WeatherData
+    from services.disease_prediction_service import HistoricalPatternAnalyzer
+    
+    location = request.args.get('location', '')
+    disease_id = request.args.get('disease_id', type=int)
+    include_weather = request.args.get('include_weather', 'false').lower() == 'true'
+    
+    try:
+        query = DiseaseOccurrence.query
+        
+        if location:
+            query = query.filter(DiseaseOccurrence.location_name.ilike(f'%{location}%'))
+        
+        if disease_id:
+            query = query.filter(DiseaseOccurrence.disease_id == disease_id)
+        
+        occurrences = query.order_by(DiseaseOccurrence.occurrence_date.desc()).limit(1000).all()
+        occurrences_data = [o.to_dict() for o in occurrences]
+        
+        # Get weather data if requested
+        weather_data = None
+        if include_weather:
+            weather_query = WeatherData.query
+            if location:
+                weather_query = weather_query.filter(WeatherData.location_name.ilike(f'%{location}%'))
+            weather_records = weather_query.limit(1000).all()
+            weather_data = [w.to_dict() for w in weather_records]
+        
+        # Initialize and train the analyzer
+        analyzer = HistoricalPatternAnalyzer()
+        analyzer.train(occurrences_data, weather_data)
+        
+        # Get comprehensive insights
+        insights = analyzer.get_insights()
+        
+        return jsonify({
+            'insights': insights,
+            'total_occurrences': len(occurrences_data),
+            'weather_data_available': weather_data is not None and len(weather_data) > 0
+        })
+    except Exception as e:
+        logger.error(f"Error analyzing historical patterns: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/historical-predict")
+def api_historical_predict():
+    """API endpoint to predict disease risk based on historical patterns"""
+    from models import DiseaseOccurrence, WeatherData
+    from services.disease_prediction_service import HistoricalPatternAnalyzer
+    from datetime import datetime
+    
+    location = request.args.get('location', '')
+    lat = request.args.get('lat', type=float)
+    lon = request.args.get('lon', type=float)
+    
+    if not location:
+        return jsonify({'error': 'Location required'}), 400
+    
+    try:
+        # Get historical occurrences
+        occurrences = DiseaseOccurrence.query.filter(
+            DiseaseOccurrence.location_name.ilike(f'%{location}%')
+        ).order_by(DiseaseOccurrence.occurrence_date.desc()).limit(1000).all()
+        occurrences_data = [o.to_dict() for o in occurrences]
+        
+        # Get historical weather data
+        weather_records = WeatherData.query.filter(
+            WeatherData.location_name.ilike(f'%{location}%')
+        ).limit(1000).all()
+        weather_data = [w.to_dict() for w in weather_records]
+        
+        # Train analyzer
+        analyzer = HistoricalPatternAnalyzer()
+        analyzer.train(occurrences_data, weather_data)
+        
+        # Get current month
+        current_month = datetime.now().month
+        
+        # Get current weather if coordinates provided
+        current_weather = None
+        if lat and lon:
+            from services.weather_service import get_current_weather
+            current_weather_data = get_current_weather(lat, lon)
+            if current_weather_data:
+                current_weather = {
+                    'temperature_avg': current_weather_data.get('temperature', 0),
+                    'humidity': current_weather_data.get('humidity', 0),
+                    'rainfall': current_weather_data.get('rainfall', 0)
+                }
+        
+        # Predict from history
+        predictions = analyzer.predict_from_history(location, current_month, current_weather)
+        
+        return jsonify({
+            'location': location,
+            'current_month': current_month,
+            'predictions': predictions,
+            'trained_on_occurrences': len(occurrences_data)
+        })
+    except Exception as e:
+        logger.error(f"Error predicting from history: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/historical/peak-season/<disease_name>")
+def api_peak_season(disease_name):
+    """API endpoint to get peak season for a specific disease"""
+    from models import DiseaseOccurrence
+    from services.disease_prediction_service import HistoricalPatternAnalyzer
+    
+    try:
+        occurrences = DiseaseOccurrence.query.limit(1000).all()
+        occurrences_data = [o.to_dict() for o in occurrences]
+        
+        analyzer = HistoricalPatternAnalyzer()
+        analyzer.train(occurrences_data)
+        
+        peak_season = analyzer.get_peak_season(disease_name)
+        
+        if not peak_season:
+            return jsonify({'error': 'Disease not found or insufficient data'}), 404
+        
+        return jsonify(peak_season)
+    except Exception as e:
+        logger.error(f"Error getting peak season: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/historical/regional-ranking")
+def api_regional_ranking():
+    """API endpoint to get disease risk ranking for a region"""
+    from models import DiseaseOccurrence
+    from services.disease_prediction_service import HistoricalPatternAnalyzer
+    
+    location = request.args.get('location', '')
+    
+    if not location:
+        return jsonify({'error': 'Location required'}), 400
+    
+    try:
+        occurrences = DiseaseOccurrence.query.filter(
+            DiseaseOccurrence.location_name.ilike(f'%{location}%')
+        ).limit(1000).all()
+        occurrences_data = [o.to_dict() for o in occurrences]
+        
+        analyzer = HistoricalPatternAnalyzer()
+        analyzer.train(occurrences_data)
+        
+        ranking = analyzer.get_regional_risk_ranking(location)
+        
+        return jsonify({
+            'location': location,
+            'ranking': ranking
+        })
+    except Exception as e:
+        logger.error(f"Error getting regional ranking: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/historical/disease-trend/<disease_name>")
+def api_disease_trend(disease_name):
+    """API endpoint to get disease trend analysis"""
+    from models import DiseaseOccurrence
+    from services.disease_prediction_service import HistoricalPatternAnalyzer
+    
+    months = request.args.get('months', 12, type=int)
+    
+    try:
+        occurrences = DiseaseOccurrence.query.limit(1000).all()
+        occurrences_data = [o.to_dict() for o in occurrences]
+        
+        analyzer = HistoricalPatternAnalyzer()
+        analyzer.train(occurrences_data)
+        
+        trend = analyzer.get_disease_trend(disease_name, months)
+        
+        if not trend or 'trend' not in trend:
+            return jsonify({'error': 'Disease not found or insufficient data'}), 404
+        
+        return jsonify(trend)
+    except Exception as e:
+        logger.error(f"Error getting disease trend: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route("/api/report-disease-occurrence", methods=['POST'])
+@login_required
+def api_report_disease_occurrence():
+    """API endpoint to report a disease occurrence (for ML training)"""
+    from models import DiseaseOccurrence, Disease
+    
+    data = request.get_json()
+    
+    disease_id = data.get('disease_id')
+    location_name = data.get('location_name')
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
+    occurrence_date = data.get('occurrence_date')
+    severity = data.get('severity', 'moderate')
+    affected_area = data.get('affected_area')
+    notes = data.get('notes')
+    
+    if not disease_id or not location_name or not occurrence_date:
+        return jsonify({'error': 'disease_id, location_name, and occurrence_date required'}), 400
+    
+    try:
+        # Validate disease exists
+        disease = Disease.query.get(disease_id)
+        if not disease:
+            return jsonify({'error': 'Disease not found'}), 404
+        
+        # Parse date
+        from datetime import datetime
+        try:
+            occurrence_date = datetime.strptime(occurrence_date, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+        
+        # Create occurrence record
+        occurrence = DiseaseOccurrence(
+            disease_id=disease_id,
+            location_name=location_name,
+            latitude=latitude,
+            longitude=longitude,
+            occurrence_date=occurrence_date,
+            severity=severity,
+            affected_area=affected_area,
+            reported_by=current_user.id,
+            notes=notes
+        )
+        
+        db.session.add(occurrence)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Disease occurrence reported successfully',
+            'occurrence_id': occurrence.id
+        })
+    except Exception as e:
+        logger.error(f"Error reporting disease occurrence: {e}")
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 
