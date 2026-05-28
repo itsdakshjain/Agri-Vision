@@ -96,11 +96,11 @@
                                 const lon = pos.coords.longitude.toFixed(5);
                                 document.getElementById('lat-input').value = lat;
                                 document.getElementById('lon-input').value = lon;
-                                cityInput.value = '';
-                                tick.style.display = 'none';
-                                cityInput.style.borderColor = 'var(--weather-location-input-border)';
-                                status.textContent = '✅ GPS location detected: ' + lat + ', ' + lon;
-                                status.className = 'weather-location-status is-success';
+                                cityInput.value = lat + ', ' + lon;
+                                tick.style.display = 'inline';
+                                cityInput.style.borderColor = 'var(--success-border)';
+                                status.textContent = '';
+                                status.className = 'weather-location-status';
                                 btn.textContent = '📍 Location Set';
                                 btn.classList.add('is-success');
                                 btn.disabled = false;
